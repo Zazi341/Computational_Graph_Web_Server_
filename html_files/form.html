@@ -1,0 +1,227 @@
+<h3 style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #2c3e50; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.1);">📁 Load Configuration</h3>
+<form action="http://localhost:8080/upload" method="post" enctype="multipart/form-data" target="graph" onsubmit="handleDeploy()">
+  <input type="file" name="conf" accept=".conf,.txt" required onchange="enableDeployButton()" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 8px 12px; border: 2px solid #3498db; border-radius: 8px; background: linear-gradient(145deg, #ffffff, #f8f9fa); box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); font-size: 14px;">
+  <button type="submit" id="deployButton" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(145deg, #3498db, #2980b9); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3); transition: all 0.2s ease; vertical-align: bottom;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 12px rgba(52, 152, 219, 0.4)'" onmouseout="this.style.transform='translateY(0px)'; this.style.boxShadow='0 4px 8px rgba(52, 152, 219, 0.3)'">🚀 Deploy</button>
+</form>
+<script>
+// Track if this is the first table load
+var isFirstTableLoad = true;
+
+function refreshTopicTable() {
+  // Use longer timeout only for the first load, then use shorter timeout
+  var timeout = isFirstTableLoad ? 500 : 100;
+  
+  // Refresh the topic table frame after config is fully processed
+  setTimeout(function() {
+    try {
+      var tableFrame = parent.frames['table'];
+      if (tableFrame) {
+        // Force refresh to the publish endpoint to initialize topics table
+        tableFrame.location.href = 'http://localhost:8080/publish?refresh=' + Date.now();
+        
+        // Mark that we've done the first load
+        isFirstTableLoad = false;
+      }
+    } catch(e) {
+      console.log('Could not refresh topic table:', e);
+    }
+  }, timeout);
+}
+
+function refreshGraphAfterPublish() {
+  // Refresh the graph frame after message is published to show updated topic values
+  setTimeout(function() {
+    try {
+      var graphFrame = parent.frames['graph'];
+      if (graphFrame) {
+        // Use the graph refresh endpoint to get updated values
+        graphFrame.location.href = 'http://localhost:8080/graph?refresh=' + Date.now();
+      }
+    } catch(e) {
+      console.log('Could not refresh graph:', e);
+    }
+  }, 200); // Wait a bit longer to ensure the publish has been processed
+}
+
+// Color scheme definitions
+var colorSchemes = {
+  topic: {
+    blue: { bg: '#e3f2fd', border: '#1976d2' },
+    green: { bg: '#e8f5e8', border: '#388e3c' },
+    purple: { bg: '#f3e5f5', border: '#7b1fa2' },
+    orange: { bg: '#fff3e0', border: '#f57c00' },
+    red: { bg: '#ffebee', border: '#d32f2f' },
+    teal: { bg: '#e0f2f1', border: '#00796b' }
+  },
+  agent: {
+    green: { bg: '#e8f5e8', border: '#388e3c' },
+    blue: { bg: '#e3f2fd', border: '#1976d2' },
+    purple: { bg: '#f3e5f5', border: '#7b1fa2' },
+    orange: { bg: '#fff3e0', border: '#f57c00' },
+    red: { bg: '#ffebee', border: '#d32f2f' },
+    pink: { bg: '#fce4ec', border: '#c2185b' },
+    indigo: { bg: '#e8eaf6', border: '#303f9f' }
+  }
+};
+
+function applyColors() {
+  try {
+    // Get selected colors
+    var topicColor = document.querySelector('input[name="topicColor"]:checked').value;
+    var agentColor = document.querySelector('input[name="agentColor"]:checked').value;
+    
+    console.log('Applying colors - Topics:', topicColor, 'Agents:', agentColor);
+    
+    // Store color preferences
+    localStorage.setItem('graphTopicColor', topicColor);
+    localStorage.setItem('graphAgentColor', agentColor);
+    
+    // Apply colors to the graph frame
+    var graphFrame = parent.frames['graph'];
+    if (graphFrame && graphFrame.window.applyCustomColors) {
+      graphFrame.window.applyCustomColors(
+        colorSchemes.topic[topicColor],
+        colorSchemes.agent[agentColor]
+      );
+    } else {
+      // If the graph frame doesn't have the function yet, refresh it with color parameters
+      if (graphFrame) {
+        var url = 'http://localhost:8080/graph?topicColor=' + topicColor + '&agentColor=' + agentColor + '&refresh=' + Date.now();
+        graphFrame.location.href = url;
+      }
+    }
+    
+  } catch(e) {
+    console.error('Error applying colors:', e);
+    alert('Error applying colors. Please try again.');
+  }
+}
+
+// Instant color application function (called on radio button change)
+function applyColorsInstantly() {
+  applyColors(); // Reuse the existing logic
+}
+
+function resetColors() {
+  try {
+    // Reset to default selections
+    document.querySelector('input[name="topicColor"][value="blue"]').checked = true;
+    document.querySelector('input[name="agentColor"][value="green"]').checked = true;
+    
+    // Clear stored preferences
+    localStorage.removeItem('graphTopicColor');
+    localStorage.removeItem('graphAgentColor');
+    
+    // Apply default colors
+    applyColors();
+    
+  } catch(e) {
+    console.error('Error resetting colors:', e);
+    alert('Error resetting colors. Please try again.');
+  }
+}
+
+// Deploy button state management
+function handleDeploy() {
+  var deployButton = document.getElementById('deployButton');
+  deployButton.disabled = true;
+  deployButton.style.background = 'linear-gradient(145deg, #95a5a6, #7f8c8d)';
+  deployButton.style.cursor = 'not-allowed';
+  deployButton.innerHTML = '⏳ Deployed';
+  deployButton.onmouseover = null;
+  deployButton.onmouseout = null;
+  
+  // Call the original refresh function
+  refreshTopicTable();
+}
+
+function enableDeployButton() {
+  var deployButton = document.getElementById('deployButton');
+  deployButton.disabled = false;
+  deployButton.style.background = 'linear-gradient(145deg, #3498db, #2980b9)';
+  deployButton.style.cursor = 'pointer';
+  deployButton.innerHTML = '🚀 Deploy';
+  
+  // Restore hover effects
+  deployButton.onmouseover = function() {
+    this.style.transform = 'translateY(-2px)';
+    this.style.boxShadow = '0 6px 12px rgba(52, 152, 219, 0.4)';
+  };
+  deployButton.onmouseout = function() {
+    this.style.transform = 'translateY(0px)';
+    this.style.boxShadow = '0 4px 8px rgba(52, 152, 219, 0.3)';
+  };
+}
+
+// Load saved color preferences on page load
+window.addEventListener('load', function() {
+  var savedTopicColor = localStorage.getItem('graphTopicColor');
+  var savedAgentColor = localStorage.getItem('graphAgentColor');
+  
+  if (savedTopicColor) {
+    var topicRadio = document.querySelector('input[name="topicColor"][value="' + savedTopicColor + '"]');
+    if (topicRadio) topicRadio.checked = true;
+  }
+  
+  if (savedAgentColor) {
+    var agentRadio = document.querySelector('input[name="agentColor"][value="' + savedAgentColor + '"]');
+    if (agentRadio) agentRadio.checked = true;
+  }
+});
+</script>
+<small style="color: #666;">
+  Upload a .conf file to create computational graph<br>
+  Available: simple.conf, test.conf, advanced.conf
+</small>
+
+<hr>
+
+<h3 style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #2c3e50; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.1);">📤 Publish Topic Message</h3>
+<form action="http://localhost:8080/publish" method="get" target="table" onsubmit="refreshGraphAfterPublish()">
+  <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500; color: #34495e; margin-right: 8px;">Topic:</label>
+  <input name="topic" placeholder="e.g. A, B, X" required style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 6px 10px; border: 2px solid #27ae60; border-radius: 6px; background: linear-gradient(145deg, #ffffff, #f8f9fa); box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); font-size: 13px; margin-right: 15px;">
+  <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500; color: #34495e; margin-right: 8px;">Value:</label>
+  <input name="msg" type="number" step="any" placeholder="e.g. 5.0" required style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 6px 10px; border: 2px solid #27ae60; border-radius: 6px; background: linear-gradient(145deg, #ffffff, #f8f9fa); box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); font-size: 13px; margin-right: 15px;">
+  <button type="submit" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(145deg, #27ae60, #229954); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; box-shadow: 0 3px 6px rgba(39, 174, 96, 0.3); transition: all 0.2s ease; vertical-align: top; margin-top: 4px;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(39, 174, 96, 0.4)'" onmouseout="this.style.transform='translateY(0px)'; this.style.boxShadow='0 3px 6px rgba(39, 174, 96, 0.3)'">📨 Send</button>
+</form>
+<small style="color: #666;">
+  Send numeric values to topics.<br>
+  Agents will process and forward messages.
+</small>
+
+<hr>
+
+<h3 style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #2c3e50; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.1);">🎨 Customize Colors</h3>
+<div style="display: flex; gap: 20px; flex-wrap: wrap; background: linear-gradient(145deg, #f8f9fa, #ffffff); padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #e9ecef;">
+  <div>
+    <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 600; color: #2c3e50; font-size: 15px;"><strong>Topic Colors:</strong></label><br>
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(52, 152, 219, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="blue" checked onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e3f2fd; border: 2px solid #1976d2; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🔵 Blue (Default)</span></label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(39, 174, 96, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="green" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e8f5e8; border: 2px solid #388e3c; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🟢 Green</span></label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(123, 31, 162, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="purple" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #f3e5f5; border: 2px solid #7b1fa2; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🟣 Purple</span></label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(245, 124, 0, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="orange" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #fff3e0; border: 2px solid #f57c00; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🟠 Orange</span></label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(211, 47, 47, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="red" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #ffebee; border: 2px solid #d32f2f; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🔴 Red</span></label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(0, 121, 107, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="topicColor" value="teal" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e0f2f1; border: 2px solid #00796b; padding: 4px 10px; border-radius: 4px; font-weight: 500;">🔷 Teal</span></label>
+    </div>
+  </div>
+  
+  <div>
+    <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 600; color: #2c3e50; font-size: 15px;"><strong>Agent Colors:</strong></label><br>
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(39, 174, 96, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="green" checked onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e8f5e8; border: 2px solid #388e3c; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🟢</span> Green (Default)</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(52, 152, 219, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="blue" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e3f2fd; border: 2px solid #1976d2; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🔵</span> Blue</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(123, 31, 162, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="purple" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #f3e5f5; border: 2px solid #7b1fa2; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🟣</span> Purple</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(245, 124, 0, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="orange" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #fff3e0; border: 2px solid #f57c00; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🟠</span> Orange</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(211, 47, 47, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="red" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #ffebee; border: 2px solid #d32f2f; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🔴</span> Red</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(194, 24, 91, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="pink" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #fce4ec; border: 2px solid #c2185b; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🩷</span> Pink</label>
+      <label style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(48, 63, 159, 0.1)'" onmouseout="this.style.background='transparent'"><input type="radio" name="agentColor" value="indigo" onchange="applyColorsInstantly()" style="margin-right: 8px;"> <span style="background: #e8eaf6; border: 2px solid #303f9f; padding: 4px 8px; border-radius: 50%; display: inline-block; width: 24px; text-align: center; font-weight: 500;">🔵</span> Indigo</label>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 15px;">
+  <button type="button" onclick="resetColors()" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(145deg, #95a5a6, #7f8c8d); color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; box-shadow: 0 3px 6px rgba(149, 165, 166, 0.3); transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(149, 165, 166, 0.4)'" onmouseout="this.style.transform='translateY(0px)'; this.style.boxShadow='0 3px 6px rgba(149, 165, 166, 0.3)'">🔄 Reset to Default</button>
+</div>
+<small style="color: #666;">
+  Choose custom colors for topics and agents in the graph visualization.
+</small>

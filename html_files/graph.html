@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Graph Visualization</title>
+    <style>
+        body { margin: 0; padding: 5px; font-family: Arial, sans-serif; background: #f5f5f5; height: 100vh; overflow: hidden; }
+        .container { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); height: calc(100vh - 20px); display: flex; flex-direction: column; }
+        #graphCanvas { border: 2px solid #ddd; border-radius: 8px; background: white; flex: 1; width: 100%; min-height: 400px; }
+        .info { margin-top: 5px; font-size: 12px; color: #666; text-align: center; }
+        .legend { display: flex; justify-content: center; gap: 15px; margin: 5px 0; font-size: 11px; }
+        .legend-item { display: flex; align-items: center; gap: 3px; }
+        .legend-color { width: 12px; height: 12px; border-radius: 3px; }
+        .arrow-legend { width: 30px; height: 2px; position: relative; margin: 0 5px; }
+        .arrow-legend::after { content: ''; position: absolute; right: -5px; top: -3px; width: 0; height: 0; border-left: 8px solid; border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
+        h2 { margin: 5px 0; font-size: 16px; text-align: center; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2 id="graphTitle">🔗 Computational Graph</h2>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: #e3f2fd; border: 2px solid #1976d2;"></div>
+            <span>Topics</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #e8f5e8; border: 2px solid #388e3c; border-radius: 50%;"></div>
+            <span>Agents</span>
+        </div>
+        <div class="legend-item">
+            <div class="arrow-legend" style="background: #2196F3;"></div>
+            <style>.arrow-legend:nth-of-type(1)::after { border-left-color: #2196F3; }</style>
+            <span>Agent Input</span>
+        </div>
+        <div class="legend-item">
+            <div class="arrow-legend" style="background: #4CAF50;"></div>
+            <style>.arrow-legend:last-of-type::after { border-left-color: #4CAF50; }</style>
+            <span>Agent Output</span>
+        </div>
+    </div>
+    <div class="controls">
+        <button class="control-button" onclick="function resetPositions() {
+            currentPositioned = 0
+            localStorage.removeItem(STORAGE_KEY);
+            drawGraph()
+        }
+        resetPositions()">🔄 Reset Positions</button>
+    </div>
+    <canvas id="graphCanvas" width="600" height="400"></canvas>
+
+    <div class="info" id="graphInfo">
+        Loading graph visualization...
+    </div>
+</div>
+
+<script>
+    // Graph data will be injected here by HtmlGraphWriter
+    window.graphData = {{GRAPH_DATA}};
+
+    let positionedData = null;      // will hold current node locations
+    let draggingNode = null;        // reference to the node being dragged
+    let dragOffset = {x: 0, y: 0};  // cursor-to-centre delta
+
+
+    function addIds(data) {
+        if (!data) return;
+        data.topics?.forEach((t, i) => { if (!t.id) t.id = `T${i}`; });
+        data.agents?.forEach((a, i) => { if (!a.id) a.id = `A${i}`; });
+    }
+
+    const STORAGE_KEY = 'graphState';
+
+    function deepClone(obj) {
+        return JSON.parse(JSON.stringify(obj));
+    }
+
+    function saveGraphState(topics, agents) {
+        const graphState = {
+            topics: topics.map(({ id, name, value, x, y }) => ({ id, name, value, x, y })),
+            agents: agents.map(({ id, name, x, y }) => ({ id, name, x, y }))
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(graphState));
+    }
+
+    function loadGraphState() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        return stored ? JSON.parse(stored) : null;
+    }
+
+    function graphStructuresEqual(current, stored) {
+        if (!current || !stored) return false;
+        if (current.topics.length !== stored.topics.length || current.agents.length !== stored.agents.length) return false;
+
+        const matchNodes = (currNodes, storedNodes, compareValue) => {
+            let valueDifferences = 0;
+            for (let i = 0; i < currNodes.length; i++) {
+                const c = currNodes[i], s = storedNodes[i];
+                if (c.id !== s.id || c.name !== s.name) return false;
+                if (compareValue && c.value !== s.value) valueDifferences++;
+            }
+            return valueDifferences <= 1;
+        };
+
+        return matchNodes(current.topics, stored.topics, true) &&
+            matchNodes(current.agents, stored.agents, false);
+    }
+
+
+    // Color scheme definitions
+    var colorSchemes = {
+        topic: {
+            blue: { bg: '#e3f2fd', border: '#1976d2' },
+            green: { bg: '#e8f5e8', border: '#388e3c' },
+            purple: { bg: '#f3e5f5', border: '#7b1fa2' },
+            orange: { bg: '#fff3e0', border: '#f57c00' },
+            red: { bg: '#ffebee', border: '#d32f2f' },
+            teal: { bg: '#e0f2f1', border: '#00796b' }
+        },
+        agent: {
+            green: { bg: '#e8f5e8', border: '#388e3c' },
+            blue: { bg: '#e3f2fd', border: '#1976d2' },
+            purple: { bg: '#f3e5f5', border: '#7b1fa2' },
+            orange: { bg: '#fff3e0', border: '#f57c00' },
+            red: { bg: '#ffebee', border: '#d32f2f' },
+            pink: { bg: '#fce4ec', border: '#c2185b' },
+            indigo: { bg: '#e8eaf6', border: '#303f9f' }
+        }
+    };
+
+    // Current color settings (defaults)
+    var currentColors = {
+        topic: colorSchemes.topic.blue,
+        agent: colorSchemes.agent.green
+    };
+
+    var currentPositioned = 0
+
+    // Function to get URL parameters
+    function getUrlParameter(name) {
+        name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+        var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+        var results = regex.exec(location.search);
+        return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+    }
+
+    // Function to apply custom colors dynamically
+    window.applyCustomColors = function(topicColors, agentColors) {
+        currentColors.topic = topicColors;
+        currentColors.agent = agentColors;
+        updateLegend(); // Update legend colors first
+        drawGraph(); // Redraw with new colors
+    };
+
+    // Initialize colors from URL parameters or localStorage
+    function initializeColors() {
+        var topicColorParam = getUrlParameter('topicColor');
+        var agentColorParam = getUrlParameter('agentColor');
+
+        // Try URL parameters first, then localStorage, then defaults
+        var topicColor = topicColorParam || localStorage.getItem('graphTopicColor') || 'blue';
+        var agentColor = agentColorParam || localStorage.getItem('graphAgentColor') || 'green';
+
+        if (colorSchemes.topic[topicColor]) {
+            currentColors.topic = colorSchemes.topic[topicColor];
+        }
+        if (colorSchemes.agent[agentColor]) {
+            currentColors.agent = colorSchemes.agent[agentColor];
+        }
+
+        console.log('Initialized colors - Topic:', topicColor, 'Agent:', agentColor);
+    }
+
+
+    // Function to calculate circular positions for all nodes
+    function calculateCircularPositions(topics, agents, canvasWidth, canvasHeight) {
+        const allNodes = [...topics, ...agents];
+        const totalNodes = allNodes.length;
+
+        if (totalNodes === 0) return { topics: [], agents: [] };
+
+        // Calculate circle parameters
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
+        const radius = Math.min(centerX, centerY) - 30; // Leave margin for node size
+
+        // Calculate angle step
+        const angleStep = (2 * Math.PI) / totalNodes;
+
+        // Start angle (top of circle)
+        let startAngle = -Math.PI / 2;
+
+        // Position all nodes
+        const positionedTopics = [];
+        const positionedAgents = [];
+
+        for (let i = 0; i < totalNodes; i++) {
+            const angle = startAngle + i * angleStep;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+
+            if (i < topics.length) {
+                positionedTopics.push({
+                    ...topics[i],
+                    x: x,
+                    y: y
+                });
+            } else {
+                positionedAgents.push({
+                    ...agents[i - topics.length],
+                    x: x,
+                    y: y
+                });
+            }
+        }
+
+        return {
+            topics: positionedTopics,
+            agents: positionedAgents
+        };
+    }
+
+    // Function to update connections with new positions
+    function updateConnections(originalConnections, positionedTopics, positionedAgents, originalTopics, originalAgents) {
+        if (!originalConnections) return [];
+
+        // Create lookup maps for new positions
+        const topicPosMap = new Map();
+        const agentPosMap = new Map();
+
+        positionedTopics.forEach((topic, index) => {
+            if (originalTopics[index]) {
+                topicPosMap.set(originalTopics[index].id, { x: topic.x, y: topic.y });
+            }
+        });
+
+        positionedAgents.forEach((agent, index) => {
+            if (originalAgents[index]) {
+                agentPosMap.set(originalAgents[index].id, { x: agent.x, y: agent.y });
+            }
+        });
+
+        // Update connections with new positions
+        return originalConnections.map(conn => {
+            // Find the corresponding nodes by their original positions
+            let newX1 = conn.x1, newY1 = conn.y1;
+            let newX2 = conn.x2, newY2 = conn.y2;
+
+            // Find source node
+            const sourceTopic = originalTopics.find(t => t.x === conn.x1 && t.y === conn.y1);
+            const sourceAgent = originalAgents.find(a => a.x === conn.x1 && a.y === conn.y1);
+
+            if (sourceTopic && topicPosMap.has(sourceTopic.id)) {
+                const pos = topicPosMap.get(sourceTopic.id);
+                newX1 = pos.x;
+                newY1 = pos.y;
+            } else if (sourceAgent && agentPosMap.has(sourceAgent.id)) {
+                const pos = agentPosMap.get(sourceAgent.id);
+                newX1 = pos.x;
+                newY1 = pos.y;
+            }
+
+            // Find target node
+            const targetTopic = originalTopics.find(t => t.x === conn.x2 && t.y === conn.y2);
+            const targetAgent = originalAgents.find(a => a.x === conn.x2 && a.y === conn.y2);
+
+            if (targetTopic && topicPosMap.has(targetTopic.id)) {
+                const pos = topicPosMap.get(targetTopic.id);
+                newX2 = pos.x;
+                newY2 = pos.y;
+            } else if (targetAgent && agentPosMap.has(targetAgent.id)) {
+                const pos = agentPosMap.get(targetAgent.id);
+                newX2 = pos.x;
+                newY2 = pos.y;
+            }
+
+            return {
+                x1: newX1,
+                y1: newY1,
+                x2: newX2,
+                y2: newY2
+            };
+        });
+    }
+
+    // Function to find the intersection point of a line with a rectangle boundary
+    function getRectangleIntersection(rectX, rectY, rectWidth, rectHeight, lineX, lineY) {
+        const left = rectX - rectWidth / 2;
+        const right = rectX + rectWidth / 2;
+        const top = rectY - rectHeight / 2;
+        const bottom = rectY + rectHeight / 2;
+
+        const dx = lineX - rectX;
+        const dy = lineY - rectY;
+
+        if (Math.abs(dx) < 0.001) {
+            return { x: rectX, y: dy > 0 ? bottom : top };
+        }
+        if (Math.abs(dy) < 0.001) {
+            return { x: dx > 0 ? right : left, y: rectY };
+        }
+
+        const slope = dy / dx;
+        let intersectX, intersectY;
+
+        if (dx > 0) {
+            intersectX = right;
+            intersectY = rectY + slope * (right - rectX);
+            if (intersectY >= top && intersectY <= bottom) {
+                return { x: intersectX, y: intersectY };
+            }
+        } else {
+            intersectX = left;
+            intersectY = rectY + slope * (left - rectX);
+            if (intersectY >= top && intersectY <= bottom) {
+                return { x: intersectX, y: intersectY };
+            }
+        }
+
+        if (dy > 0) {
+            intersectY = bottom;
+            intersectX = rectX + (bottom - rectY) / slope;
+            if (intersectX >= left && intersectX <= right) {
+                return { x: intersectX, y: intersectY };
+            }
+        } else {
+            intersectY = top;
+            intersectX = rectX + (top - rectY) / slope;
+            if (intersectX >= left && intersectX <= right) {
+                return { x: intersectX, y: intersectY };
+            }
+        }
+
+        return { x: rectX, y: rectY };
+    }
+
+    // Function to find the intersection point of a line with a circle boundary
+    function getCircleIntersection(circleX, circleY, radius, lineX, lineY) {
+        const angle = Math.atan2(lineY - circleY, lineX - circleX);
+        return {
+            x: circleX + radius * Math.cos(angle),
+            y: circleY + radius * Math.sin(angle)
+        };
+    }
+
+    // Function to determine if a node is a topic (rectangle) or agent (circle)
+    function getNodeType(x, y, data) {
+        for (let topic of data.topics) {
+            if (Math.abs(topic.x - x) < 1 && Math.abs(topic.y - y) < 1) {
+                return 'topic';
+            }
+        }
+        for (let agent of data.agents) {
+            if (Math.abs(agent.x - x) < 1 && Math.abs(agent.y - y) < 1) {
+                return 'agent';
+            }
+        }
+        return null;
+    }
+
+    // Function to draw an arrow with proper boundary calculations
+    function drawArrow(ctx, x1, y1, x2, y2, data, isInput) {
+        const headLength = 10;
+        const startType = getNodeType(x1, y1, data);
+        const endType = getNodeType(x2, y2, data);
+
+        if (!startType || !endType) {
+            return;
+        }
+
+        let startX, startY, endX, endY;
+
+        if (startType === 'topic') {
+            const intersection = getRectangleIntersection(x1, y1, 80, 52, x2, y2);
+            startX = intersection.x;
+            startY = intersection.y;
+        } else {
+            const intersection = getCircleIntersection(x1, y1, 25, x2, y2);
+            startX = intersection.x;
+            startY = intersection.y;
+        }
+
+        if (endType === 'topic') {
+            const intersection = getRectangleIntersection(x2, y2, 80, 52, x1, y1);
+            endX = intersection.x;
+            endY = intersection.y;
+        } else {
+            const intersection = getCircleIntersection(x2, y2, 25, x1, y1);
+            endX = intersection.x;
+            endY = intersection.y;
+        }
+
+        const angle = Math.atan2(endY - startY, endX - startX);
+
+        // Use current color scheme for arrows
+        // Input arrows (going to agents) use topic colors, Output arrows (from agents) use agent colors
+        const color = isInput ? currentColors.topic.border : currentColors.agent.border;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - headLength * Math.cos(angle - Math.PI / 6), endY - headLength * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(endX - headLength * Math.cos(angle + Math.PI / 6), endY - headLength * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // Function to truncate text to fit within rectangle boundaries
+    function truncateText(text, maxLength = 12) {
+        if (!text || text.length <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength - 3) + '...';
+    }
+
+    // translate display-space (client) coords to canvas-bitmap coords
+    function toCanvasSpace(e, canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width  / rect.width;   // bitmap px / CSS px
+        const scaleY = canvas.height / rect.height;
+        return {
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top)  * scaleY
+        };
+    }
+
+
+    function onMouseDown(e) {
+        const rect = e.target.getBoundingClientRect();
+        const {x, y} = toCanvasSpace(e, e.target);
+        const node = pickNode(x, y);
+        if (node) {
+            draggingNode = node;
+            dragOffset.x = x - node.x;
+            dragOffset.y = y - node.y;
+        }
+    }
+
+    function onMouseMove(e) {
+        if (!draggingNode) return;
+        const {x, y} = toCanvasSpace(e, e.target);
+        draggingNode.x = x - dragOffset.x;
+        draggingNode.y = y - dragOffset.y;
+        drawGraph();           // redraw everything
+    }
+
+    function onMouseUp() {
+        draggingNode = null;
+        if (positionedData) {
+            saveGraphState(positionedData.topics, positionedData.agents);
+        }
+    }
+
+
+    function drawGraph() {
+
+        addIds(window.graphData);
+
+        const canvas = document.getElementById('graphCanvas');
+        if (!canvas) {
+            console.error('Canvas element not found');
+            return;
+        }
+
+
+        const ctx = canvas.getContext('2d');
+        const originalData = window.graphData || { topics: [], agents: [], connections: [] };
+
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (originalData.topics.length === 0 && originalData.agents.length === 0) {
+            ctx.fillStyle = '#666';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('No configuration loaded yet.', canvas.width/2, canvas.height/2 - 10);
+            ctx.fillText('Upload a config file to see the graph.', canvas.width/2, canvas.height/2 + 10);
+            document.getElementById('graphInfo').innerHTML = '⚠️ No graph data available';
+            return;
+        }
+
+        // Calculate circular positions
+        if (!currentPositioned) {
+            const stored = loadGraphState();
+            if (stored && graphStructuresEqual(originalData, stored)) {
+                // Use stored positions
+                positionedData = {
+                    topics: originalData.topics.map(t => {
+                        const st = stored.topics.find(s => s.id === t.id);
+                        return st ? { ...t, x: st.x, y: st.y } : t;
+                    }),
+                    agents: originalData.agents.map(a => {
+                        const sa = stored.agents.find(s => s.id === a.id);
+                        return sa ? { ...a, x: sa.x, y: sa.y } : a;
+                    })
+                };
+            } else {
+                // Structure changed — calculate fresh positions
+                positionedData = calculateCircularPositions(
+                    originalData.topics, originalData.agents,
+                    canvas.width, canvas.height
+                );
+            }
+            currentPositioned = 1;
+        }
+
+
+        // Update connections with new positions
+        const updatedConnections = updateConnections(
+            originalData.connections || [],
+            positionedData.topics,
+            positionedData.agents,
+            originalData.topics || [],
+            originalData.agents || []
+        );
+
+        // Create data object with positioned nodes
+        const data = {
+            topics: positionedData.topics,
+            agents: positionedData.agents,
+            connections: updatedConnections
+        };
+
+        // Draw connections first
+        if (data.connections && data.connections.length > 0) {
+            ctx.lineWidth = 2;
+            data.connections.forEach(conn => {
+                const endType = getNodeType(conn.x2, conn.y2, data);
+                const isInput = endType === 'agent';
+                drawArrow(ctx, conn.x1, conn.y1, conn.x2, conn.y2, data, isInput);
+            });
+        }
+
+        // Draw topics (rectangles) with custom colors
+        if (data.topics && data.topics.length > 0) {
+            data.topics.forEach(topic => {
+                ctx.fillStyle = currentColors.topic.bg;
+                ctx.strokeStyle = currentColors.topic.border;
+                ctx.lineWidth = 2;
+                ctx.fillRect(topic.x - 40, topic.y - 26, 80, 52);
+                ctx.strokeRect(topic.x - 40, topic.y - 26, 80, 52);
+
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(topic.name, topic.x, topic.y - 2);
+
+                // Topic value (lower portion) - regular 10px Arial
+                ctx.fillStyle = '#000';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                const displayValue = truncateText(topic.value || 'N/A');
+                ctx.fillText(displayValue, topic.x, topic.y + 8);
+
+                ctx.font = '10px Arial';
+                ctx.fillStyle = '#666';
+                ctx.fillText((topic.connections || 0) + ' conn', topic.x, topic.y + 16);
+            });
+        }
+
+        // Draw agents (circles) with custom colors
+        if (data.agents && data.agents.length > 0) {
+            data.agents.forEach(agent => {
+                ctx.fillStyle = currentColors.agent.bg;
+                ctx.strokeStyle = currentColors.agent.border;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(agent.x, agent.y, 25, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(agent.name, agent.x, agent.y + 3);
+            });
+        }
+
+        // Update info
+        document.getElementById('graphInfo').innerHTML =
+            `📊 Graph contains ${data.topics.length} topics and ${data.agents.length} agents`;
+        document.getElementById('graphTitle').innerHTML =
+            `🔗 Computational Graph (${data.topics.length + data.agents.length} nodes)`;
+    }
+
+    // Function to update legend colors
+    function updateLegend() {
+        const topicLegend = document.querySelector('.legend-item:first-child .legend-color');
+        const agentLegend = document.querySelector('.legend-item:nth-child(2) .legend-color');
+        const inputArrow = document.querySelector('.legend-item:nth-child(3) .arrow-legend');
+        const outputArrow = document.querySelector('.legend-item:nth-child(4) .arrow-legend');
+
+        if (topicLegend) {
+            topicLegend.style.background = currentColors.topic.bg;
+            topicLegend.style.borderColor = currentColors.topic.border;
+        }
+        if (agentLegend) {
+            agentLegend.style.background = currentColors.agent.bg;
+            agentLegend.style.borderColor = currentColors.agent.border;
+        }
+
+        // Update arrow colors in legend to match current scheme
+        if (inputArrow) {
+            inputArrow.style.background = currentColors.topic.border;
+            // Update the arrow head color via CSS
+            const inputStyle = document.querySelector('#inputArrowStyle') || document.createElement('style');
+            inputStyle.id = 'inputArrowStyle';
+            inputStyle.textContent = `.legend-item:nth-child(3) .arrow-legend::after { border-left-color: ${currentColors.topic.border} !important; }`;
+            if (!document.querySelector('#inputArrowStyle')) {
+                document.head.appendChild(inputStyle);
+            }
+        }
+        if (outputArrow) {
+            outputArrow.style.background = currentColors.agent.border;
+            // Update the arrow head color via CSS
+            const outputStyle = document.querySelector('#outputArrowStyle') || document.createElement('style');
+            outputStyle.id = 'outputArrowStyle';
+            outputStyle.textContent = `.legend-item:nth-child(4) .arrow-legend::after { border-left-color: ${currentColors.agent.border} !important; }`;
+            if (!document.querySelector('#outputArrowStyle')) {
+                document.head.appendChild(outputStyle);
+            }
+        }
+    }
+
+    function pointInRect(px, py, cx, cy, w = 120, h = 80) {   // was 80×52
+        return Math.abs(px - cx) <= w / 2 &&
+            Math.abs(py - cy) <= h / 2;
+    }
+    function pointInCircle(px, py, cx, cy, r = 40) {          // was 25
+        return Math.hypot(px - cx, py - cy) <= r;
+    }
+
+
+    // returns the node object that is under the cursor (or null)
+    function pickNode(x, y) {
+        if (!positionedData) return null;   // <- new safety check
+        for (const t of positionedData.topics)
+            if (pointInRect(x, y, t.x, t.y)) return t;
+        for (const a of positionedData.agents)
+            if (pointInCircle(x, y, a.x, a.y)) return a;
+        return null;
+    }
+
+
+
+    // Initialize graph
+    window.onload = function () {
+        initializeColors();
+        updateLegend();
+
+        const canvas = document.getElementById('graphCanvas');
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        ['mouseup','mouseleave'].forEach(ev =>
+            canvas.addEventListener(ev, onMouseUp)
+        );
+
+        drawGraph();
+        setTimeout(() => { drawGraph(); updateLegend(); }, 100);
+    };
+
+
+</script>
+</body>
+</html>
